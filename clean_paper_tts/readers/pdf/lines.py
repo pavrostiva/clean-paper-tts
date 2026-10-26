@@ -247,56 +247,89 @@ def _merge_row_fragments(lines: list[Line]) -> list[Line]:
     * glues hanging labels ('2.1 |', 'FIGURE 1 |') to their text
     * glues inline-math pieces back into their sentence
     * drops tiny sub/superscript fragments left over on their own
+
+    Everything works on y-sorted windows, so pages with thousands of tiny labels (vector plots) stay fast.
     """
     lines = sorted(lines, key=lambda ln: (ln.y0, ln.x0))
-    # 1. duplicates
+    # 1. duplicates: only lines starting at nearly the same height can be duplicates
     kept: list[Line] = []
     for a in lines:
         dup = False
-        for b in kept:
+        for k in range(len(kept) - 1, -1, -1):
+            b = kept[k]
+            if b.y0 < a.y0 - 12:
+                break
             if _v_overlap(a, b) > 0.7 * min(a.bbox.h, b.bbox.h) and a.bbox.h_overlap(b.bbox) > 0.7 * min(a.bbox.w, b.bbox.w):
                 ta, tb = re.sub(r"\W+", "", a.text.lower()), re.sub(r"\W+", "", b.text.lower())
                 if ta and tb and (ta in tb or tb in ta):
                     if len(ta) > len(tb):
-                        kept[kept.index(b)] = a
+                        kept[k] = a
                     dup = True
                     break
         if not dup:
             kept.append(a)
-    lines = sorted(kept, key=lambda ln: (ln.y0, ln.x0))
-    # 2. glue fragments on the same row
-    changed = True
-    while changed:
-        changed = False
-        for i, a in enumerate(lines):
-            best = None
-            label = bool(LABEL_RE.match(a.text)) and len(a.text) <= 14
-            for j, b in enumerate(lines):
-                if i == j or b.x0 < a.x0 - 1:
-                    continue
-                gap = b.x0 - a.x1
-                ov = _v_overlap(a, b)
-                big_sz = max(a.size, b.size)
-                same_row = (ov >= 0.5 * min(a.bbox.h, b.bbox.h) and abs(a.cy - b.cy) <= 0.45 * big_sz) or (
-                    min(a.size, b.size) <= 0.8 * big_sz and ov >= 0.7 * min(a.bbox.h, b.bbox.h))
-                label_ok = label and not LABEL_RE.match(b.text) and 0 <= gap <= 3.2 * a.size and \
-                    (same_row or b.y0 <= a.cy <= b.y1 or a.y0 <= b.cy <= a.y1) and abs(b.cy - a.cy) <= 1.3 * max(a.size, b.size)
-                row_ok = same_row and -2.0 <= gap <= 0.9 * max(a.size, b.size)
-                if (label_ok or row_ok) and (best is None or b.x0 < lines[best].x0):
-                    best = j
-            if best is not None:
-                b = lines[best]
-                merged = _join(a, b)
-                lines = [ln for k, ln in enumerate(lines) if k not in (i, best)] + [merged]
-                lines.sort(key=lambda ln: (ln.y0, ln.x0))
-                changed = True
+    # 2. group lines into visual rows (by vertical centre), then merge neighbours inside each row
+    rows: list[list[Line]] = []
+    for ln in sorted(kept, key=lambda l: l.cy):
+        placed = False
+        for row in reversed(rows[-12:]):
+            rep = max(row, key=lambda l: l.size)
+            if rep.cy < ln.cy - 3 * max(rep.size, ln.size):
                 break
-    # 3. stray sub/superscript fragments
+            big = max(rep.size, ln.size)
+            same = abs(rep.cy - ln.cy) <= 0.45 * big or (
+                min(rep.size, ln.size) <= 0.8 * big and _v_overlap(rep, ln) >= 0.7 * min(rep.bbox.h, ln.bbox.h))
+            if same:
+                row.append(ln)
+                placed = True
+                break
+        if not placed:
+            rows.append([ln])
+    merged: list[Line] = []
+    for row in rows:
+        row.sort(key=lambda l: l.x0)
+        cur = row[0]
+        for nxt in row[1:]:
+            gap = nxt.x0 - cur.x1
+            big = max(cur.size, nxt.size)
+            label = bool(LABEL_RE.match(cur.text)) and len(cur.text) <= 14 and not LABEL_RE.match(nxt.text) and 0 <= gap <= 3.2 * cur.size
+            if label or -2.0 <= gap <= 0.9 * big:
+                cur = _join(cur, nxt)
+            else:
+                merged.append(cur)
+                cur = nxt
+        merged.append(cur)
+    # a label whose text sits on a neighbouring row ("2.1 |" centred beside a two-line heading)
+    merged.sort(key=lambda ln: (ln.y0, ln.x0))
+    out: list[Line] = []
+    used: set[int] = set()
+    for i, a in enumerate(merged):
+        if id(a) in used:
+            continue
+        if LABEL_RE.match(a.text) and len(a.text) <= 14:
+            for j in range(i + 1, min(i + 6, len(merged))):
+                b = merged[j]
+                if id(b) in used or LABEL_RE.match(b.text):
+                    continue
+                if 0 <= b.x0 - a.x1 <= 3.2 * a.size and (b.y0 <= a.cy <= b.y1) and abs(b.cy - a.cy) <= 1.3 * max(a.size, b.size):
+                    out.append(_join(a, b))
+                    used.add(id(b))
+                    break
+            else:
+                out.append(a)
+            continue
+        out.append(a)
+    # 3. stray sub/superscript fragments (windowed by y)
+    out.sort(key=lambda ln: ln.y0)
     final: list[Line] = []
-    for a in lines:
+    for k, a in enumerate(out):
         if len(a.text) <= 2 and a.size <= 6.5:
-            host = next((b for b in lines if b is not a and b.size >= a.size + 1.2 and len(b.text) > 12
-                         and b.x0 - 3 <= a.x0 and a.x1 <= b.x1 + 3 and abs(b.cy - a.cy) <= 0.9 * b.size), None)
+            host = None
+            for b in out[max(0, k - 40): k + 40]:
+                if b is not a and b.size >= a.size + 1.2 and len(b.text) > 12 and b.x0 - 3 <= a.x0 and a.x1 <= b.x1 + 3 \
+                        and abs(b.cy - a.cy) <= 0.9 * b.size:
+                    host = b
+                    break
             if host is not None:
                 continue
         final.append(a)
