@@ -24,6 +24,17 @@ def show_html(html: str, height: int = 700) -> None:
         components.html(html, height=height, scrolling=True)
 
 
+def _code_version() -> str:
+    """Short hash of the converter sources, so cached results never outlive a code update."""
+    h = hashlib.sha1()
+    for f in sorted(Path(__file__).parent.joinpath("clean_paper_tts").rglob("*.py")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:8]
+
+
+CODE_VERSION = _code_version()
+
+
 st.set_page_config(page_title="Clean Paper TTS", page_icon="🎧", layout="wide")
 
 st.title("🎧 Clean Paper TTS")
@@ -61,17 +72,6 @@ def build_options() -> Options:
         fetch_remote_images=fetch_remote, render_dpi=dpi, drop_sections=DEFAULT_DROP_SECTIONS + extra,
         extra_noise_patterns=[x.strip() for x in extra_noise.splitlines() if x.strip()],
     )
-
-
-def _code_version() -> str:
-    """Short hash of the converter sources, so cached results never outlive a code update."""
-    h = hashlib.sha1()
-    for f in sorted(Path(__file__).parent.joinpath("clean_paper_tts").rglob("*.py")):
-        h.update(f.read_bytes())
-    return h.hexdigest()[:8]
-
-
-CODE_VERSION = _code_version()
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
