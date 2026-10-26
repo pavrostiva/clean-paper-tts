@@ -21,6 +21,7 @@ from .regions import (CAPTION_RE, TABLE_LABEL_RE, Region, find_equation_regions,
                       find_visual_regions, _horizontal_rules, is_caption_start)
 
 MAX_PAGES = 400
+USE_PYMUPDF_TABLE_FINDER = False
 HEADER_ZONE = 0.075
 BULLET_RE = re.compile(r"^\s*(?:[•▪●◦‣\-–—*]\s+|\(?\d{1,2}[.)]\s+\S|\(?[a-z][.)]\s+[A-Z])")
 SENTENCE_END = (".", "!", "?", ":", ";", ")", "]", '"', "'", "”")
@@ -390,7 +391,9 @@ class PdfReader:
             if rules is None:
                 rules = _horizontal_rules(page, pd.orient)
                 try:
-                    for t in page.find_tables().tables:
+                    # PyMuPDF's own table finder changed nothing on 30+ test papers but is 2-4x slower
+                    # (newer releases run an ML model), so it is off by default.
+                    for t in (page.find_tables().tables if USE_PYMUPDF_TABLE_FINDER else []):
                         if t.row_count >= 2 and t.col_count >= 2:
                             extra.append(pd.orient.to_upright(t.bbox))
                 except Exception:
