@@ -1,49 +1,99 @@
-# clean-paper-tts
+<div align="center">
 
-Scientific papers are a pain to listen to. Text-to-speech apps read journal headers, page numbers,
-"Downloaded from…" watermarks, reference lists, and then try to pronounce a results table cell by cell.
+# 🎧 clean-paper-tts
 
-This tool takes a paper as **PDF, HTML or MHTML** and writes one clean HTML file you can open in a
-TTS reader on your phone:
+**Turn a scientific paper into something you can actually listen to.**
 
-- body text stays real text, in the right reading order (two-column layouts included);
-- **tables, figures and display equations become images** (the reader skips them), captions stay as text;
-- running headers/footers, margin watermarks, front matter (affiliations, dates, licence blurbs),
-  citation markers like `[12]` or `(Smith et al., 2020)`, reference lists, acknowledgements and similar
-  sections are removed;
-- hyphenated line breaks are repaired, ligatures normalised, sidebar junk in web pages ignored.
+PDF · HTML · MHTML &nbsp;→&nbsp; one clean HTML file for your phone's text-to-speech reader
 
-It was built with biology, bioinformatics and chemoinformatics papers in mind (ACS, Wiley, Nature,
-Elsevier, MDPI, Frontiers, PLOS, PMC layouts), but the heuristics are generic.
+[![Open the app](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://clean-paper-tts.streamlit.app/)
+&nbsp;
+[![tests](https://github.com/pavrostiva/clean-paper-tts/actions/workflows/ci.yml/badge.svg)](https://github.com/pavrostiva/clean-paper-tts/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
 
-## Use it
+### 👉 [clean-paper-tts.streamlit.app](https://clean-paper-tts.streamlit.app/) 👈
+*Drop a file, download the HTML, open it in your reader app. Nothing is stored.*
 
-### Web app
+<img src="docs/app.png" alt="The web app" width="720">
 
-Start it locally (below) or deploy your own copy for free on
-[Streamlit Community Cloud](https://streamlit.io/cloud): *New app → this repository → main file `app.py`*.
-Open the link, drop in one or more files, download the `.html`, load it into your reader app.
-A "What was removed" tab shows everything that was filtered out, which is handy when you tune the options.
+</div>
 
-Files are processed in memory and never stored.
+---
 
-### Run locally
+## Why
+
+Text-to-speech apps are great until you feed them a paper. They read the journal header on every page,
+`Downloaded from…` watermarks, page numbers, the reference list, and then try to pronounce a results table
+cell by cell: *"three point four five open bracket three point one three dash…"*
+
+This tool keeps what you want to hear and hides the rest.
+
+| | what happens |
+|---|---|
+| 📖 **Prose** | stays real text, in the right reading order (two-column layouts, hyphenated line breaks, ligatures fixed) |
+| 📊 **Tables** | drawn as images, so the reader skips them. The caption stays as text |
+| 🖼️ **Figures** | kept as images with silent alt text |
+| ➗ **Display equations** | rendered as images (from LaTeX/MathML, or cropped from the PDF) |
+| 🔢 **Citation markers** | `[12]`, `(Smith et al., 2020)`, superscript `¹²⁻¹⁴` are removed; real superscripts like `10⁶` or `Ca²⁺` are left alone |
+| 🧹 **Journal junk** | running headers/footers, margin watermarks, affiliations, licence blurbs, "Cite this", page counters |
+| ✂️ **Whole sections** | references, acknowledgements, author contributions, funding, supporting information, … (editable) |
+| 🧪 **Chemistry** | optional: cut `¹H NMR (400 MHz, DMSO-d6) δ 8.45 (s, 1H)…` listings out of synthesis paragraphs |
+
+Built for biology, bioinformatics and chemoinformatics papers (ACS, Wiley, Elsevier/Cell, Nature, MDPI, Frontiers,
+PLOS, PMC layouts), but nothing is journal-specific by design.
+
+<div align="center">
+<img src="docs/phone.png" alt="Result on a phone: text, a table image and a figure" width="560">
+<br><sub>What your reader app shows: running text, then a table and a figure as images.</sub>
+</div>
+
+## Using it
+
+### 🌐 The web app
+
+Open **<https://clean-paper-tts.streamlit.app/>**, upload one or more files, tweak the options in the sidebar,
+press *Download HTML*, then open the file in your TTS reader.
+
+Three tabs under each result:
+
+- **Preview**: what the page looks like.
+- **Outline**: the headings that were found.
+- **What was removed**: everything that was filtered out, grouped by reason (watermarks, headers, front matter,
+  sections, your own regex patterns, citation markers, table text …). If something important disappeared,
+  this is where you see why.
+
+<div align="center"><img src="docs/app-removed.png" alt="What was removed tab" width="640"></div>
+
+### Getting the best input
+
+| Source | What to do |
+|---|---|
+| Publisher PDF | Works directly. Scanned PDFs (no text layer) are not supported. |
+| Web article | Chrome/Edge: **Save as → Webpage, Single File (.mhtml)**. Figures get embedded. A plain `.html` also works; images are then downloaded from the page's URLs (can be switched off). |
+| Preprints / PMC | PDF or MHTML both fine. |
+
+Reader apps: anything that opens HTML (Speechify, @Voice Aloud Reader, Librera, Moon+ Reader, browser "read aloud"…).
+Images have empty `alt` text on purpose, so they are skipped silently.
+
+### 💻 Run it yourself
 
 ```bash
+git clone https://github.com/pavrostiva/clean-paper-tts && cd clean-paper-tts
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-### Command line
+**Command line**
 
 ```bash
 python -m clean_paper_tts paper.pdf -o paper.html
 python -m clean_paper_tts paper.mhtml --drop-methods --authors --report report.json
 ```
 
-`--help` lists all switches (keep citations, drop figures, keep NMR listings, …).
+`--help` lists every switch.
 
-### From Python
+**From Python**
 
 ```python
 from clean_paper_tts import convert, Options
@@ -53,57 +103,68 @@ open("paper.html", "w", encoding="utf-8").write(result.html)
 print(result.document.stats(), result.document.warnings)
 ```
 
-## Getting the best input
-
-| Source | What to do |
-|---|---|
-| Publisher PDF | Works directly. Scanned PDFs (no text layer) are not supported. |
-| Web article | In Chrome/Edge use **Save as → Webpage, Single File (.mhtml)**. Figures are embedded, so they end up in the output. A plain `.html` also works, images are then downloaded from the page's URLs if the "download images" option is on. |
-| Preprints / PMC | PDF or MHTML both fine. |
-
-In your reader app just open the generated `.html` (Speechify, @Voice Aloud Reader, Librera, Moon+ Reader,
-Edge/Chrome "Read aloud"… anything that reads HTML). Images have empty `alt` text on purpose so they are skipped silently.
+**Deploy your own copy:** [Streamlit Community Cloud](https://streamlit.io/cloud) → *New app* → this repo, branch `main`, file `app.py`.
 
 ## Options worth knowing
 
-- **Drop Methods / Experimental** – long reagent lists are tedious to hear.
-- **Remove NMR / MS data listings** – cuts `1H NMR (400 MHz, DMSO-d6) δ 8.45 (s, 1H)…` tails out of synthesis paragraphs.
-- **Extra section titles / paragraph patterns** – regexes, one per line, for journal-specific leftovers.
+| Option | Default | Notes |
+|---|---|---|
+| Read figure / table captions | on | off = captions are silent too |
+| Include figure images | on | off = only tables and equations stay as images |
+| Drop Methods / Experimental | off | skips long reagent lists |
+| Remove citation markers | on | numeric `[12]`, linked numbers, superscripts, `(Author, year)` |
+| Remove NMR / MS listings | on | cuts characterisation data tails |
+| Extra section titles / paragraph patterns | – | regexes, one per line, for journal-specific leftovers |
 
 ## How it works
 
+```mermaid
+flowchart LR
+    A[PDF] --> R1[PDF reader<br/>PyMuPDF layout analysis]
+    B[HTML / MHTML] --> R2[HTML reader<br/>article body + DOM walk]
+    R1 --> D[(Document<br/>headings · paragraphs · images)]
+    R2 --> D
+    D --> F[Filters<br/>text clean-up · noise · sections · chemistry]
+    F --> W[HTML writer<br/>one self-contained file]
+```
+
 ```
 clean_paper_tts/
-├── readers/        input formats -> Document (list of headings / paragraphs / images)
-│   ├── pdf/        PyMuPDF: lines -> regions (figure, table, equation) -> reading order -> paragraphs
-│   ├── html.py     article-body detection + DOM walk (MathML / MathJax / KaTeX, tables, figures)
+├── readers/        input formats -> Document
+│   ├── pdf/        lines -> regions (figure / table / equation) -> reading order -> paragraphs
+│   ├── html.py     article-body detection, MathML / MathJax / KaTeX, tables, figures, citation links
 │   └── mhtml.py    unpacks web archives and their embedded images
-├── filters/        post-processing on the Document: text clean-up, noise, section dropping, chemistry
+├── filters/        post-processing: text, noise patterns, section dropping, chemistry
 ├── render/         table -> PNG (Pillow), LaTeX -> PNG (matplotlib), HTML writer
 ├── convert.py      public entry point
 └── cli.py
 app.py              Streamlit UI
-tests/              synthetic PDFs / HTML, no copyrighted papers
+tests/              synthetic PDFs / HTML (no copyrighted papers)
 ```
 
-### Extending
+<details>
+<summary><b>Extending it</b></summary>
 
-- **A journal's web layout is not recognised** → add a selector to `BODY_SELECTORS` (or a class to
-  `NOISE_CLASS_RE`) in `readers/html.py`.
+- **A journal's web layout is not recognised** → add a selector to `BODY_SELECTORS` (or a class to `NOISE_CLASS_RE`) in `readers/html.py`.
 - **A recurring junk line shows up in the text** → add a regex to `NOISE_PATTERNS` in `filters/noise.py`.
 - **A new kind of clean-up** → write `def my_filter(doc, options)` and append it to `FILTERS` in `filters/__init__.py`.
 - **A new input format** → implement a reader that returns a `Document` and route it in `convert.py`.
-- **A new option** → add it to `Options` (`options.py`) and the sidebar in `app.py`.
+- **A new option** → add it to `Options` (`options.py`) and to the sidebar in `app.py`.
 
-## Known limits
+</details>
 
-- Inline maths inside sentences stays as text (sub/superscripts are flattened: `NH32Cl2`); only display equations become images.
+<details>
+<summary><b>Known limits</b></summary>
+
+- Inline maths inside a sentence stays text (sub/superscripts are flattened: `NH32Cl2`); only display equations become images.
 - Tables that continue across pages are cut at the page break.
 - PDF equation detection is heuristic (centred, operator-heavy lines); unusual layouts can slip through.
 - No OCR for scanned documents.
 
-If a paper converts badly, the quickest fix is usually a new noise pattern or selector; open an issue with the
-journal name and (if you can share it) the file.
+If a paper converts badly, the quickest fix is usually a new noise pattern or selector. Open an issue with the journal name
+and, if you can share it, the file.
+
+</details>
 
 ## Development
 

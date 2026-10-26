@@ -6,14 +6,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from ...textutil import is_citation_superscript as _is_citation_superscript
 from ...textutil import normalize
 from .geometry import Orientation, Rect
 
 BOLD_FONT_RE = re.compile(r"bold|black|semibold|demi|heavy|smbd|subhead|[-,]bd\b|\.b\b|-b$", re.I)
 MATH_FONT_RE = re.compile(r"cmmi|cmsy|cmex|cmr\d|msbm|msam|symbol|mt-?extra|mtmi|mtsy|cambria ?math|math|euclid|"
                           r"mathematica|rsfs|eufm|lmmath|stixmath|stix.*math", re.I)
-UNIT_PREFIX = {"cm", "mm", "nm", "um", "km", "m", "s", "kg", "mg", "ml", "pm", "fm", "min", "hr", "h", "mol",
-               "l", "m", "g", "ul", "dl", "mM", "uM", "nM", "k", "c", "x", "p", "r", "log"}
 CITE_ONLY_RE = re.compile(r"^[\d\s,–—−\-]+$")
 
 
@@ -31,6 +30,7 @@ class Line:
     first_span_bold: bool = False
     raw_dir: tuple[float, float] = (1.0, 0.0)
     tags: set[str] = field(default_factory=set)
+    removed: list[str] = field(default_factory=list)  # citation markers dropped from this line
 
     @property
     def cy(self): return self.bbox.cy
@@ -171,6 +171,7 @@ def _build_line(spans, ln, orient: Orientation, page_no: int, strip_cites: bool)
     gaps = 0
     prev_r: Rect | None = None
     glue_fix = False
+    removed: list[str] = []
     n_chars = math_chars = bold_chars = 0
     raised_flags = [sp_[0]["size"] < dom * 0.9 and (origin_y(sp_[0]) < base - 0.2 * dom or bool(sp_[0]["flags"] & 1))
                     for sp_ in sp]
@@ -187,6 +188,7 @@ def _build_line(spans, ln, orient: Orientation, page_no: int, strip_cites: bool)
             after = sp[j + 1][0]["text"] if j + 1 < len(sp) else ""
             if CITE_ONLY_RE.match(run.strip() or "x") and _is_citation_superscript(run, "".join(parts), after):
                 prev_r = sp[j][1]
+                removed.append(run.strip())
                 glue_fix = True
                 skip_until = j
                 continue
@@ -214,24 +216,8 @@ def _build_line(spans, ln, orient: Orientation, page_no: int, strip_cites: bool)
     first_bold = _is_bold(sp[0][0]["font"], sp[0][0]["flags"])
     font = fonts.most_common(1)[0][0]
     return Line(bbox=bbox, text=text, size=dom, bold=bold_chars >= 0.7 * max(n_chars, 1), font=font, page=page_no,
-                math_ratio=math_chars / max(n_chars, 1), n_chars=n_chars, gaps=gaps, first_span_bold=first_bold)
-
-
-def _is_citation_superscript(t: str, before: str, after: str) -> bool:
-    t = t.strip()
-    if after[:1] in "+−-–" and "," not in t:  # charge like Pt4+ / Ca2+
-        return False
-    if "," in t or re.search(r"\d\s*[–—-]\s*\d", t):
-        return bool(before.strip())
-    b = before.rstrip()
-    if not b:
-        return False
-    if b[-1] in ".,;:)]\"'!?%":
-        return True
-    m = re.search(r"([A-Za-z]+)$", b)
-    if m and len(m.group(1)) >= 3 and m.group(1).lower() not in UNIT_PREFIX and not b[-2:].isupper():
-        return len(t) <= 3
-    return False
+                math_ratio=math_chars / max(n_chars, 1), n_chars=n_chars, gaps=gaps, first_span_bold=first_bold,
+                removed=removed)
 
 
 LABEL_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*|(?:fig(?:ure)?\.?|table|scheme|chart)\s*S?\d+[A-Za-z]?|[A-Za-z]\d+)\s*[|.:]?\s*$", re.I)
@@ -251,7 +237,7 @@ def _join(a: Line, b: Line) -> Line:
                 bold=(a.bold * a.n_chars + b.bold * b.n_chars) >= 0.7 * max(n, 1), font=big.font, page=a.page,
                 math_ratio=(a.math_ratio * a.n_chars + b.math_ratio * b.n_chars) / max(n, 1), n_chars=n,
                 gaps=a.gaps + b.gaps + (1 if gap > 1.6 * big.size else 0),
-                first_span_bold=a.first_span_bold, raw_dir=a.raw_dir)
+                first_span_bold=a.first_span_bold, raw_dir=a.raw_dir, removed=a.removed + b.removed)
 
 
 def _merge_row_fragments(lines: list[Line]) -> list[Line]:

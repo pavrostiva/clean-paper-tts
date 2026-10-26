@@ -15,7 +15,7 @@ from ..options import Options
 from ..render.formula_image import render_latex
 from ..render.images import to_visual
 from ..render.table_image import render_table
-from ..textutil import clean_heading, normalize
+from ..textutil import clean_heading, is_citation_superscript, normalize
 from .resources import Resources
 
 # First selector that yields >= MIN_BODY_CHARS of text wins (most specific first).
@@ -49,7 +49,11 @@ UI_TEXT_RE = re.compile(
     r"(Open in figure viewer|PowerPoint|Download (figure|image|table|PowerPoint)|View (full|larger) (size|image)|"
     r"Full size (image|table)|Open in new tab|Download (high-res|full-size) image)", re.I)
 CITATION_LINK_TEXT = re.compile(r"^\s*[\[(]?\s*\d{1,3}(?:\s*[,–—−-]\s*\d{1,3})*\s*[\])]?\s*$")
-CITATION_LINK_CLASS = re.compile(r"bib|ref|cite|citation|footnote|fn|noteLink|xref", re.I)
+CITATION_LINK_CLASS = re.compile(r"bib|ref|cite|citation|footnote|fn|noteLink|xref|noteref", re.I)
+# fragment ids that point into the reference list: #bib4, #ref12, #B7, #CR3, #fn2, #core-r5 ...
+REFERENCE_FRAGMENT_RE = re.compile(r"(?:^|[-_.])(?:bbib|bib|ref|refs|cit|cite|cr|fn|b|r|c|xref-ref|ref-ref)[-_.]?\d+", re.I)
+SEPARATOR_ONLY_RE = re.compile(r"^[\s,;\u2013\u2014\u2212-]+$")
+CITE_ONLY_RE = re.compile(r"^[\d\s,\u2013\u2014\u2212-]+$")
 INLINE = {"a", "span", "b", "strong", "i", "em", "u", "sup", "sub", "small", "mark", "code", "abbr",
           "cite", "q", "font", "label", "time", "bdi", "bdo", "kbd", "var", "samp", "math", "br", "wbr"}
 BLOCK_CONTAINERS = {"div", "section", "article", "main", "body", "header", "blockquote", "figure",
@@ -301,9 +305,16 @@ class HtmlReader:
             elif name == "math":
                 parts.append(" " + self._math_text(n) + " ")
             elif name in ("a", "sup", "span") and self._is_citation_marker(n):
+                self.doc.citations_removed.append(n.get_text("", strip=True))
                 return
             elif name == "sup" or name == "sub":
                 inner = n.get_text("", strip=True)
+                if name == "sup" and self.opt.strip_citations and inner:
+                    if SEPARATOR_ONLY_RE.match(inner):  # commas between linked citation numbers
+                        return
+                    if CITE_ONLY_RE.match(inner) and is_citation_superscript(inner, "".join(parts), ""):
+                        self.doc.citations_removed.append(inner)
+                        return
                 parts.append(inner)
             elif name == "img":
                 alt = n.get("alt", "")
@@ -321,19 +332,33 @@ class HtmlReader:
         text = UI_TEXT_RE.sub(" ", "".join(parts))
         return normalize(text)
 
-    @staticmethod
-    def _is_citation_marker(n: Tag) -> bool:
+    def _is_citation_marker(self, n: Tag) -> bool:
+        """A link (or a <sup>/<span> wrapping one) that points into the reference list and shows only numbers."""
+        if not self.opt.strip_citations:
+            return False
         txt = n.get_text("", strip=True)
         if not txt or not CITATION_LINK_TEXT.match(txt):
             return False
         if n.name == "a":
-            href = n.get("href", "")
-            cls = " ".join(n.get("class", []))
-            return href.startswith("#") or bool(CITATION_LINK_CLASS.search(cls)) or "ref" in (n.get("aria-label", "") or "").lower()
+            return self._points_to_reference(n)
         if n.name in ("sup", "span"):
-            inner = n.find("a")
-            return bool(inner and (inner.get("href", "").startswith("#") or CITATION_LINK_CLASS.search(" ".join(inner.get("class", [])))))
+            anchors = n.find_all("a")
+            return bool(anchors) and all(self._points_to_reference(a) for a in anchors) \
+                and CITE_ONLY_RE.match(re.sub(r"[\[\]()]", "", txt)) is not None
         return False
+
+    @staticmethod
+    def _points_to_reference(a: Tag) -> bool:
+        href = a.get("href", "") or ""
+        frag = href.split("#", 1)[1] if "#" in href else ""
+        cls = " ".join(a.get("class", []))
+        attrs = " ".join(str(a.get(k, "")) for k in ("data-xocs-content-type", "data-test", "data-track-action",
+                                                      "role", "epub:type", "aria-label", "data-reference-type"))
+        if re.search(r"reference|citation|noteref|bibr", attrs, re.I):
+            return True
+        if CITATION_LINK_CLASS.search(cls) and (frag or href.startswith("#")):
+            return True
+        return bool(frag and REFERENCE_FRAGMENT_RE.search(frag))
 
     # ---------------------------------------------------------- math
     @staticmethod

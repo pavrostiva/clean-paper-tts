@@ -4,7 +4,7 @@ import re
 
 from ..model import Document, Heading, ListBlock, Paragraph
 from ..options import Options
-from ..textutil import build_vocabulary, resolve_soft_breaks, strip_citations, tidy_spacing
+from ..textutil import build_vocabulary, citation_matches, resolve_soft_breaks, strip_citations, tidy_spacing
 
 
 def _all_texts(doc: Document) -> list[str]:
@@ -35,10 +35,12 @@ _CAPTION_PLACEHOLDER = re.compile(
 def clean_text(doc: Document, options: Options) -> None:
     """Resolve line-break hyphens, strip citation markers, tidy spacing."""
     vocab = build_vocabulary(_all_texts(doc))
+    removed: list[str] = list(doc.citations_removed)
 
     def fix(t: str, body: bool) -> str:
         t = _fix_glitches(resolve_soft_breaks(t, vocab))
         if body and options.strip_citations:
+            removed.extend(m.group(0).strip() for m in citation_matches(t, options.strip_author_year_citations))
             t = strip_citations(t, numeric=True, author_year=options.strip_author_year_citations)
         return tidy_spacing(t)
 
@@ -58,3 +60,6 @@ def clean_text(doc: Document, options: Options) -> None:
                 continue
         kept.append(b)
     doc.blocks = kept
+    if removed:
+        shown = " ".join(removed[:80]) + (" …" if len(removed) > 80 else "")
+        doc.drop("citation markers", f"{len(removed)} removed: {shown}")

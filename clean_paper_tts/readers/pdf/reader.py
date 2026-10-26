@@ -197,6 +197,7 @@ class PdfReader:
         if total_chars < 200 and len(self.pdf) > 0:
             self.doc.warnings.append(
                 "Almost no selectable text found: this looks like a scanned PDF. OCR is not supported yet.")
+        self.doc.citations_removed = [c for p in self.pages for ln in p.lines for c in ln.removed]
         self._body_size()
         self._drop_margin_text()
         self._drop_running_headers()
@@ -263,7 +264,7 @@ class PdfReader:
             for ln in p.lines:
                 if zone(p, ln):
                     k = key_of(ln)
-                    if (n >= 3 and keys[k] >= thresh) or re.fullmatch(r"[#\s|/of]*", k) or re.fullmatch(r"page # of #", k):
+                    if (n >= 2 and keys[k] >= thresh) or re.fullmatch(r"[#\s|/of]*", k) or re.fullmatch(r"page # of #", k):
                         self.doc.drop("running header/footer", ln.text, p.idx + 1)
                         continue
                 kept.append(ln)

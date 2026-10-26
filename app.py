@@ -107,7 +107,7 @@ for f in files or []:
                 st.write("Nothing was removed.")
             groups = defaultdict(list)
             for d in doc.dropped:
-                groups[d.reason.split(":")[0]].append(d)
+                groups[d.reason].append(d)
             for reason, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
                 with st.expander(f"{reason} ({len(items)})"):
                     for d in items[:200]:

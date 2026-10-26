@@ -55,6 +55,7 @@ class Document:
     blocks: list[Block] = field(default_factory=list)
     dropped: list[Dropped] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    citations_removed: list[str] = field(default_factory=list)  # marker texts, for the audit tab
     source_type: str = ""
 
     def drop(self, reason: str, text: str, page: int | None = None) -> None:

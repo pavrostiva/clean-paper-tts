@@ -95,3 +95,16 @@ Content-Location: https://example.org/img/f1.png
 def test_garbage_does_not_crash():
     res = convert(b"<html><body>hi</body></html>", "x.html", Options())
     assert res.document.warnings
+
+
+def test_sciencedirect_style_numeric_citations_removed():
+    cite = lambda n: (f'<a class="anchor" href="https://example.org/article#bib{n}" data-xocs-content-type="reference">'  # noqa: E731
+                      f'<span class="anchor-text"><sup>{n}</sup></span></a>')
+    body = (f"<h2>Introduction</h2><p>{PARA} Known from earlier studies{cite(6)}<sup>,</sup>{cite(7)} and reviews.<sup>10,11</sup> "
+            "The mixture contained 10<sup>6</sup> cells/cm<sup>2</sup> and Ca<sup>2+</sup> ions.</p>")
+    res = convert(page(body), "p.html", Options())
+    html = res.html
+    assert "studies and reviews." in html
+    assert "10,11" not in html and "studies6" not in html
+    assert "10<" not in html and "106 cells/cm2" in html and "Ca2+" in html  # real superscripts untouched
+    assert any(d.reason == "citation markers" for d in res.document.dropped)

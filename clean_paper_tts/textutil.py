@@ -103,6 +103,12 @@ _AUTHOR_YEAR = re.compile(
 )
 
 
+def citation_matches(text: str, author_year: bool = True):
+    yield from _NUMERIC_CITE.finditer(text)
+    if author_year:
+        yield from _AUTHOR_YEAR.finditer(text)
+
+
 def strip_citations(text: str, numeric: bool = True, author_year: bool = True) -> str:
     if numeric:
         text = _NUMERIC_CITE.sub("", text)
@@ -129,3 +135,25 @@ def clean_heading(text: str) -> str:
     t = normalize(text).lstrip(_BULLETS + " ")
     t = re.sub(r"^((?:\d+\.)*\d+)\s*\|\s*", r"\1 ", t)  # "2.8 | Title" -> "2.8 Title"
     return t.strip()
+
+
+# ------------------------------------------------- superscript citation numbers
+UNIT_PREFIX = {"cm", "mm", "nm", "um", "km", "m", "s", "kg", "mg", "ml", "pm", "fm", "min", "hr", "h", "mol",
+               "l", "m", "g", "ul", "dl", "mM", "uM", "nM", "k", "c", "x", "p", "r", "log"}
+def is_citation_superscript(t: str, before: str, after: str) -> bool:
+    t = t.strip()
+    if after[:1] and after[:1] in "+\u2212-\u2013" and "," not in t:  # charge like Pt4+ / Ca2+
+        return False
+    if "," in t or re.search(r"\d\s*[–—-]\s*\d", t):
+        return bool(before.strip())
+    b = before.rstrip()
+    if not b:
+        return False
+    if b[-1] in ".,;:)]\"'!?%":
+        return True
+    m = re.search(r"([A-Za-z]+)$", b)
+    if m and len(m.group(1)) >= 3 and m.group(1).lower() not in UNIT_PREFIX and not b[-2:].isupper():
+        return len(t) <= 3
+    return False
+
+
