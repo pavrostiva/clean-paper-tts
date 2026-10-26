@@ -17,7 +17,7 @@ from ...filters.noise import match_noise
 from ...textutil import clean_heading, join_lines, normalize
 from .geometry import Orientation, Rect
 from .lines import Line, PageText, extract_lines
-from .regions import (CAPTION_RE, TABLE_LABEL_RE, Region, find_equation_regions, find_table_region,
+from .regions import (CAPTION_RE, TABLE_LABEL_RE, Region, find_equation_regions, find_listing_regions, find_table_region,
                       find_visual_regions, _horizontal_rules, is_caption_start)
 
 MAX_PAGES = 400
@@ -95,8 +95,8 @@ class Layout:
         width = max(self.x_max - self.x_min, 1)
         mid = (self.x_min + self.x_max) / 2
         best, best_cross = mid, 10 ** 9
-        x = mid - 0.12 * width
-        while x <= mid + 0.12 * width:
+        x = self.x_min + 0.12 * width  # a gutter can sit left of centre when the page has a narrow sidebar
+        while x <= self.x_max - 0.12 * width:
             cross = sum(1 for ln in long_lines if ln.x0 < x - 2 and ln.x1 > x + 2)
             if cross < best_cross or (cross == best_cross and abs(x - mid) < abs(best - mid)):
                 best, best_cross = x, cross
@@ -331,6 +331,26 @@ class PdfReader:
         caption_groups = self._caption_groups(lines, layout)
         cap_ids = {id(ln) for g in caption_groups for ln in g}
 
+        # a drawn/filled box right under (or over) a "Table N" caption is that table, not a figure
+        for r in regions:
+            for grp in caption_groups:
+                if not TABLE_LABEL_RE.match(grp[0].text) or r.kind != "figure":
+                    continue
+                below = 0 <= r.bbox.y0 - grp[-1].y1 <= 45 and r.bbox.h_overlap(grp[0].bbox) > 0
+                above = 0 <= grp[0].y0 - r.bbox.y1 <= 25 and r.bbox.h_overlap(grp[0].bbox) > 0
+                if below or above:
+                    r.kind = "table"
+                    r.native_dpi = 0.0
+                    foot = [ln for ln in sorted(lines, key=lambda l: l.y0) if id(ln) not in cap_ids
+                            and ln.y0 >= r.bbox.y1 - 1 and ln.size <= self.body - 1.0 and ln.bbox.h_overlap(r.bbox) > 0]
+                    edge = r.bbox.y1
+                    for ln in foot:  # small-print table footnotes directly below
+                        if ln.y0 - edge > 12 or is_caption_start(ln, self.body):
+                            break
+                        r.bbox = r.bbox.union(ln.bbox)
+                        edge = ln.y1
+                    break
+
         def absorb(region: Region, reason: str, only_short: bool = False) -> None:
             nonlocal lines
             keep = []
@@ -355,7 +375,7 @@ class PdfReader:
                         continue
                     if r.bbox.expanded(9).inter_area(ln.bbox) > 0 and ln.bbox.h_overlap(r.bbox) > 0:
                         r.bbox = r.bbox.union(ln.bbox)
-            absorb(r, "figure text")
+            absorb(r, "table body" if r.kind == "table" else "figure text")
 
         # tables
         rules = None
@@ -363,6 +383,9 @@ class PdfReader:
         for grp in caption_groups:
             first = grp[0]
             if not TABLE_LABEL_RE.match(first.text):
+                continue
+            if any(r.kind == "table" and (0 <= r.bbox.y0 - grp[-1].y1 <= 45 or 0 <= first.y0 - r.bbox.y1 <= 25)
+                   and r.bbox.h_overlap(first.bbox) > 0 for r in regions):
                 continue
             if rules is None:
                 rules = _horizontal_rules(page, pd.orient)
@@ -385,6 +408,11 @@ class PdfReader:
             tr = Region("table", reg.expanded(3), label=first.text[:30])
             regions.append(tr)
             absorb(tr, "table body")
+
+        # numbered pseudo-code
+        for lr in find_listing_regions([ln for ln in lines if id(ln) not in cap_ids], self.body, [r.bbox for r in regions]):
+            regions.append(lr)
+            absorb(lr, "code listing")
 
         # display equations
         if self.opt.formulas_as_images:
@@ -525,6 +553,11 @@ class PdfReader:
             a, b = re.sub(r"\W+", "", doc.title.lower()), re.sub(r"\W+", "", meta_title.lower())
             if not doc.title or SequenceMatcher(None, a, b).ratio() >= 0.85:
                 doc.title = meta_title
+        for it in raw:
+            if isinstance(it, RawPara) and it.role == "body" and len(it.lines) <= 8 and it.size <= body - 1.5:
+                ph = self.pages[0].rect.h if self.pages else 800
+                if all(ln.y0 > 0.8 * ph for ln in it.lines) and not self._is_heading(it):
+                    it.role = "dropme:page footnote"
         if self.pages:
             h = self.pages[0].rect.h
             for it in first_page:
@@ -539,9 +572,18 @@ class PdfReader:
                     it.role = f"dropme:noise: {hit}"
 
         # --- classify paragraphs: headings / captions
+        prev_page = -1
+        prev_open = False  # previous body paragraph ended mid-sentence
         for it in raw:
             if isinstance(it, RawPara) and it.role == "body" and self._is_heading(it):
-                it.role = "heading"
+                numbered = bool(re.match(r"^\d+(\.\d+)*[.)]?\s", it.text))
+                if not (prev_open and not numbered and not it.text.isupper() and it.page == prev_page):
+                    it.role = "heading"
+            if isinstance(it, RawPara) and it.role == "body":
+                prev_open = not it.text.rstrip().endswith(SENTENCE_END)
+                prev_page = it.page
+            elif isinstance(it, RawPara) and it.role == "heading":
+                prev_open = False
 
         blocks: list = []
         for it in raw:
@@ -577,6 +619,20 @@ class PdfReader:
         if abs_idx is None:
             abs_idx = next((i for i, b in enumerate(blocks) if isinstance(b, RawPara) and ABSTRACT_RE.match(b.text) and len(b.text) > 120), None)
         first_idx = self.pages[0].idx if self.pages else 0
+        used_fallback = False
+        if abs_idx is None:
+            # no "Abstract" label: the first long, non-affiliation paragraph on page 1 starts the content
+            for i, b in enumerate(blocks):
+                if isinstance(b, RawPara) and b.page == first_idx and b.role == "body":
+                    t = b.text
+                    widths = sorted(ln.bbox.w for ln in b.lines)
+                    wide_enough = widths[len(widths) // 2] >= 0.38 * self.pages[0].rect.w  # not a narrow sidebar
+                    if (len(t.split()) >= 25 and wide_enough and not AFFIL_WORDS.search(t[:400]) and "@" not in t
+                            and not re.match(r"(citation|copyright|funding|edited by|reviewed by)", t, re.I)
+                            and not self._parse_authors(t)):
+                        abs_idx = i
+                        used_fallback = True
+                        break
         keep: list = []
         for i, b in enumerate(blocks):
             page_of = b[3] if isinstance(b, list) else b.page
@@ -592,6 +648,10 @@ class PdfReader:
                 continue
             keep.append(b)
         blocks = keep
+        if used_fallback and blocks:
+            nxt = next((x for x in blocks[:12] if isinstance(x, list)), None)
+            if nxt is not None and re.match(r"(\d+\s*[.)]?\s*)?(intro|background)", nxt[1], re.I):
+                blocks.insert(0, ["heading", "Abstract", 2, first_idx, None])
         if not doc.authors and doc.metadata.get("pdf_author"):
             doc.authors = [a.strip() for a in re.split(r"[;,]", doc.metadata["pdf_author"]) if a.strip()]
 
@@ -665,6 +725,8 @@ class PdfReader:
             return False
         if txt.endswith((",", ":", ";")) or (txt.endswith(".") and len(txt.split()) > 10):
             return False
+        if txt[:1].islower() or len(re.findall(r"[,;]", txt)) >= 4:
+            return False  # bold inline text (model names, citations) rather than a title
         if re.fullmatch(r"[\d\s.,()-]+", txt):
             return False
         letters = sum(c.isalpha() for c in txt)

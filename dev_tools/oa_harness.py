@@ -104,7 +104,12 @@ def looks_like(data: bytes, kind: str) -> bool:
     if kind == "pdf":
         return data[:5] == b"%PDF-"
     head = data[:3000].lower()
-    return b"<html" in head or b"<!doctype html" in head
+    if b"<html" not in head and b"<!doctype html" not in head:
+        return False
+    low = data[:60000].lower()
+    blocked = (b"checking your browser", b"requires javascript to function", b"recaptcha", b"access denied",
+               b"just a moment", b"are you a robot", b"enable javascript and cookies")
+    return not (any(m in low for m in blocked) and len(data) < 80_000)
 
 
 def cmd_fetch(a: argparse.Namespace) -> Path:

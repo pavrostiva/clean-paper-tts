@@ -252,3 +252,50 @@ def find_equation_regions(lines: list[Line], body: float, col_of, taken: list[Re
         if box.h <= 9 * body:
             regions.append(Region("formula", box.expanded(2)))
     return regions
+
+
+# -------------------------------------------------------------- code listings
+_NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[:.)]?\s+\S")
+_CODE_WORDS = re.compile(r"\b(for|end|if|then|else|while|do|return|procedure|function|input|output|require|ensure|let|set|foreach|repeat|until)\b", re.I)
+_LISTING_HEAD = re.compile(r"^\s*(algorithm\s*\d*|input|output|require|ensure|procedure|function)\b", re.I)
+
+
+def find_listing_regions(lines: list[Line], body: float, taken: list[Rect]) -> list[Region]:
+    """Numbered pseudo-code ('1: for i in ...') is unreadable aloud; show it as an image instead."""
+    cands = sorted((ln for ln in lines if not any(ln.bbox.frac_inside(t) > 0.5 for t in taken)),
+                   key=lambda ln: (ln.x0 > 0 and ln.y0, ln.x0))
+    regions: list[Region] = []
+    i = 0
+    cands = sorted(cands, key=lambda ln: (ln.y0, ln.x0))
+    while i < len(cands):
+        m = _NUMBERED.match(cands[i].text)
+        if not m:
+            i += 1
+            continue
+        run = [cands[i]]
+        last = int(m.group(1))
+        j = i + 1
+        while j < len(cands):
+            ln = cands[j]
+            mm = _NUMBERED.match(ln.text)
+            if mm and int(mm.group(1)) == last + 1 and abs(ln.x0 - run[0].x0) < 80 and ln.y0 - run[-1].y1 < 2.5 * body:
+                run.append(ln)
+                last += 1
+                j += 1
+            elif not mm and ln.y0 - run[-1].y1 < 1.2 * body and ln.x0 >= run[0].x0 - 3 and ln.bbox.w < 0.9 * (run[0].bbox.w + 200):
+                j += 1  # continuation line of a long statement
+            else:
+                break
+        keyword_share = sum(bool(_CODE_WORDS.search(ln.text)) for ln in run) / len(run)
+        if len(run) >= 5 and keyword_share >= 0.4:
+            box = run[0].bbox
+            for ln in cands[i:j]:
+                box = box.union(ln.bbox)
+            for ln in cands:  # header lines right above: "Algorithm 1 ...", "Input: ..."
+                if _LISTING_HEAD.match(ln.text) and 0 <= box.y0 - ln.y1 <= 2.0 * body and ln.bbox.h_overlap(box) > 0:
+                    box = box.union(ln.bbox)
+            regions.append(Region("figure", box.expanded(3), label="algorithm"))
+            i = j
+        else:
+            i += 1
+    return regions

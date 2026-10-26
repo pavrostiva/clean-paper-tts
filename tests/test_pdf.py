@@ -100,3 +100,21 @@ def test_encrypted_or_empty_pdf_gives_clear_error():
     doc.new_page()
     res = convert(doc.tobytes(), "blank.pdf", Options())
     assert any("scanned" in w or "No readable" in w for w in res.document.warnings)
+
+
+def test_numbered_pseudocode_becomes_image_and_two_page_header_removed():
+    doc = pymupdf.open()
+    code = ["Algorithm 1 Find matches", "1: procedure SEARCH(text, patterns)", "2:   for each position i in text do",
+            "3:     if node has output then", "4:       report match", "5:     end if", "6:   end for", "7: end procedure"]
+    for n in range(2):
+        page = doc.new_page(width=595, height=782)
+        page.insert_text((45, 30), "Running Title of the Journal", fontsize=8)
+        page.insert_textbox(pymupdf.Rect(45, 70, 550, 200), "We describe the search procedure in detail below. " * 12, fontsize=10)
+        if n == 0:
+            for k, line in enumerate(code):
+                page.insert_text((60, 230 + k * 12), line, fontsize=9)
+        page.insert_textbox(pymupdf.Rect(45, 380, 550, 500), "The procedure terminates after one pass over the text. " * 10, fontsize=10)
+    res = convert(doc.tobytes(), "algo.pdf", Options())
+    kinds = [b.kind for b in res.document.blocks if isinstance(b, Visual)]
+    assert kinds == ["figure"]
+    assert "end procedure" not in body_text(res) and "Running Title" not in body_text(res)
