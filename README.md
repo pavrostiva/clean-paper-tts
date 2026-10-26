@@ -8,7 +8,6 @@ PDF · HTML · MHTML &nbsp;→&nbsp; one clean HTML file for your phone's text-t
 
 [![Open the app](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://clean-paper-tts.streamlit.app/)
 &nbsp;
-[![tests](https://github.com/pavrostiva/clean-paper-tts/actions/workflows/ci.yml/badge.svg)](https://github.com/pavrostiva/clean-paper-tts/actions/workflows/ci.yml)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
@@ -118,14 +117,19 @@ print(result.document.stats(), result.document.warnings)
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[PDF] --> R1[PDF reader<br/>PyMuPDF layout analysis]
-    B[HTML / MHTML] --> R2[HTML reader<br/>article body + DOM walk]
-    R1 --> D[(Document<br/>headings · paragraphs · images)]
-    R2 --> D
-    D --> F[Filters<br/>text clean-up · noise · sections · chemistry]
-    F --> W[HTML writer<br/>one self-contained file]
+```text
+  PDF ───────────► PDF reader ────────┐        layout analysis: columns, figures,
+                   (PyMuPDF)          │        tables, equations, reading order
+                                      ▼
+                               ┌─────────────┐     ┌──────────────────────────┐     ┌─────────────────┐
+                               │  Document   │ ──► │  Filters                 │ ──► │  one clean,     │
+                               │ headings    │     │  text · noise · sections │     │  self-contained │
+                               │ paragraphs  │     │  citations · chemistry   │     │  HTML file      │
+                               │ images      │     └──────────────────────────┘     └─────────────────┘
+                               └─────────────┘
+                                      ▲
+  HTML / MHTML ──► HTML reader ───────┘        article body, MathML/MathJax/KaTeX,
+                   (BeautifulSoup)             tables, figures, citation links
 ```
 
 ```
