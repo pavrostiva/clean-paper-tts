@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from pathlib import Path
 
 import streamlit as st
 
@@ -48,7 +49,7 @@ with st.sidebar:
         extra_noise = st.text_area("Extra paragraph patterns to drop (regex, one per line)", "", height=80,
                                    help="A paragraph matching any pattern is removed.")
         dpi = st.slider("Render resolution (DPI)", 100, 300, 170, 10)
-    st.caption("Files are processed in memory and are not stored.")
+    st.caption(f"Files are processed in memory and are not stored.  \nconverter build `{CODE_VERSION}`")
 
 
 def build_options() -> Options:
@@ -62,8 +63,19 @@ def build_options() -> Options:
     )
 
 
+def _code_version() -> str:
+    """Short hash of the converter sources, so cached results never outlive a code update."""
+    h = hashlib.sha1()
+    for f in sorted(Path(__file__).parent.joinpath("clean_paper_tts").rglob("*.py")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:8]
+
+
+CODE_VERSION = _code_version()
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
-def run_conversion(data_hash: str, data: bytes, name: str, opts_repr: str, _opts: Options):
+def run_conversion(data_hash: str, data: bytes, name: str, opts_repr: str, code_version: str, _opts: Options):
     result = convert(data, name, _opts)
     return result.html, result.document
 
@@ -79,7 +91,7 @@ for f in files or []:
     with st.container(border=True):
         try:
             with st.spinner(f"Converting {f.name}…"):
-                html, doc = run_conversion(key, data, f.name, repr(opts), opts)
+                html, doc = run_conversion(key, data, f.name, repr(opts), CODE_VERSION, opts)
         except Exception as e:  # keep the app alive on malformed files
             st.error(f"Could not convert **{f.name}**: {e}")
             continue

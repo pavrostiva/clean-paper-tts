@@ -4,4 +4,4 @@ from .convert import ConversionResult, convert
 from .options import Options
 
 __all__ = ["convert", "ConversionResult", "Options"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"
