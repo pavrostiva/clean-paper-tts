@@ -256,7 +256,10 @@ def find_equation_regions(lines: list[Line], body: float, col_of, taken: list[Re
 
 # -------------------------------------------------------------- code listings
 _NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[:.)]?\s+\S")
-_CODE_WORDS = re.compile(r"\b(for|end|if|then|else|while|do|return|procedure|function|input|output|require|ensure|let|set|foreach|repeat|until)\b", re.I)
+# a pseudo-code statement starts with a keyword (after the line number) or is an assignment
+_CODE_WORDS = re.compile(
+    r"^\s*\d{1,3}\s*[:.)]?\s+(?:(?:for|end|if|then|else|while|do|return|procedure|function|input|output|require|ensure|let|set|"
+    r"foreach|repeat|until|call|break|continue|initialize)\b|\w+(?:\[[^\]]*\])?\s*(?:\u2190|:=|<-|=))", re.I)
 _LISTING_HEAD = re.compile(r"^\s*(algorithm\s*\d*|input|output|require|ensure|procedure|function)\b", re.I)
 
 
@@ -287,7 +290,8 @@ def find_listing_regions(lines: list[Line], body: float, taken: list[Rect]) -> l
             else:
                 break
         keyword_share = sum(bool(_CODE_WORDS.search(ln.text)) for ln in run) / len(run)
-        if len(run) >= 5 and keyword_share >= 0.4:
+        colon_share = sum(bool(re.match(r"^\s*\d{1,3}\s*:", ln.text)) for ln in run) / len(run)
+        if len(run) >= 5 and keyword_share >= 0.5 and (colon_share >= 0.6 or keyword_share >= 0.8):
             box = run[0].bbox
             for ln in cands[i:j]:
                 box = box.union(ln.bbox)
