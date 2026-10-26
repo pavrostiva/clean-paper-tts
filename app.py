@@ -80,8 +80,12 @@ def run_conversion(data_hash: str, data: bytes, name: str, opts_repr: str, code_
     return result.html, result.document
 
 
-files = st.file_uploader("Upload one or more papers", type=["pdf", "html", "htm", "mhtml", "mht"],
-                         accept_multiple_files=True)
+multi = st.toggle("Convert several papers at once", value=False,
+                  help="Off: a new upload replaces the previous paper (one step instead of delete + add).")
+uploaded = st.file_uploader("Upload a paper (PDF, HTML or MHTML)" if not multi else "Upload papers",
+                            type=["pdf", "html", "htm", "mhtml", "mht"], accept_multiple_files=multi,
+                            key="uploader_multi" if multi else "uploader_single")
+files = uploaded if multi else ([uploaded] if uploaded else [])
 st.caption("Tip: for web articles use *Save as → Webpage, Single File (.mhtml)* in Chrome/Edge so figures are embedded.")
 
 opts = build_options()

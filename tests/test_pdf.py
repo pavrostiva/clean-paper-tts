@@ -118,3 +118,23 @@ def test_numbered_pseudocode_becomes_image_and_two_page_header_removed():
     kinds = [b.kind for b in res.document.blocks if isinstance(b, Visual)]
     assert kinds == ["figure"]
     assert "end procedure" not in body_text(res) and "Running Title" not in body_text(res)
+
+
+def test_numbered_stacked_equation_is_one_image():
+    doc = pymupdf.open()
+    first = doc.new_page(width=595, height=782)
+    first.insert_textbox(pymupdf.Rect(45, 60, 550, 300), "This study evaluates scoring models on a large cohort of patients. " * 12, fontsize=10)
+    page = doc.new_page(width=595, height=782)
+    page.insert_textbox(pymupdf.Rect(45, 60, 550, 140), "We define the score of each model as shown in Equation (1): " + "x " * 5, fontsize=10)
+    page.insert_text((200, 175), "numerator part", fontsize=10)
+    page.draw_line((190, 180), (300, 180), width=0.6)
+    page.insert_text((215, 192), "denominator", fontsize=10)
+    page.insert_text((130, 182), "Score =", fontsize=10)
+    page.insert_text((520, 182), "(1)", fontsize=10)
+    page.insert_textbox(pymupdf.Rect(45, 215, 550, 290), "where the numerator and denominator are computed over all patients in the cohort. " * 3, fontsize=10)
+    res = convert(doc.tobytes(), "eq.pdf", Options())
+    kinds = [type(b).__name__ + (":" + b.kind if isinstance(b, Visual) else "") for b in res.document.blocks]
+    assert kinds.count("Visual:formula") == 1
+    txt = body_text(res)
+    assert "numerator part" not in txt and "denominator" not in txt.split("where")[0]
+    assert "where the numerator" in txt

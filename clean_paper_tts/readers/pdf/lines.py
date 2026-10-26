@@ -293,7 +293,8 @@ def _merge_row_fragments(lines: list[Line]) -> list[Line]:
             gap = nxt.x0 - cur.x1
             big = max(cur.size, nxt.size)
             label = bool(LABEL_RE.match(cur.text)) and len(cur.text) <= 14 and not LABEL_RE.match(nxt.text) and 0 <= gap <= 3.2 * cur.size
-            if label or -2.0 <= gap <= 0.9 * big:
+            overlap_ok = gap >= -18.0 and min(cur.n_chars, nxt.n_chars) <= 14  # inline-math glyph runs overlap a little
+            if label or ((-2.0 <= gap or overlap_ok) and gap <= 0.9 * big):
                 cur = _join(cur, nxt)
             else:
                 merged.append(cur)

@@ -303,3 +303,59 @@ def find_listing_regions(lines: list[Line], body: float, taken: list[Rect]) -> l
         else:
             i += 1
     return regions
+
+
+# ------------------------------------------------- numbered display equations
+_NUMBER_ONLY = re.compile(r"^\s*\(\s*\d{1,3}[a-z]?\s*\)\s*$")
+
+
+def find_numbered_equations(lines: list[Line], body: float, col_of, taken: list[Rect]) -> list[Region]:
+    """Equations with a right-aligned number '(n)': take the whole stack of non-prose rows around it.
+
+    Fractions, sums and sub/superscripts are spread over several rows that no single-line heuristic can
+    pair up; the equation number is a reliable anchor and the surrounding flush-left prose delimits the block.
+    """
+    free = [ln for ln in lines if not any(ln.bbox.frac_inside(t) > 0.5 for t in taken)]
+    free.sort(key=lambda ln: ln.y0)
+    regions: list[Region] = []
+    used: set[int] = set()
+    for anchor in free:
+        if id(anchor) in used:
+            continue
+        cx0, cx1 = col_of(anchor)
+        w = max(cx1 - cx0, 1.0)
+        text = anchor.text.strip()
+        at_right = anchor.x1 >= cx1 - 0.06 * w
+        number_only = bool(_NUMBER_ONLY.match(text))
+        ends_with_number = bool(EQ_NUMBER_RE.search(text)) and anchor.x0 - cx0 > 0.1 * w
+        if not (at_right and (number_only or ends_with_number)):
+            continue
+
+        def prose(ln: Line) -> bool:
+            longw = sum(len(re.sub(r"\W", "", x)) >= 4 for x in ln.text.split())
+            return ln.x0 - cx0 <= 0.06 * w and (longw >= 1 or len(ln.text.split()) >= 5) and ln.math_ratio < 0.4
+
+        def near(ln: Line) -> bool:
+            return col_of(ln) == col_of(anchor) and ln.size <= body + 1.5 and not ln.bold
+
+        box = anchor.bbox
+        members = [anchor]
+        pool = [ln for ln in free if ln is not anchor and near(ln) and id(ln) not in used]
+        changed = True
+        while changed and len(members) < 40:
+            changed = False
+            for ln in pool:
+                if any(ln is m for m in members):
+                    continue
+                dist = max(ln.y0 - box.y1, box.y0 - ln.y1, 0.0)  # rows of one equation interleave vertically
+                if dist <= 0.9 * body and not prose(ln) and not is_caption_start(ln, body):
+                    members.append(ln)
+                    box = box.union(ln.bbox)
+                    changed = True
+        content = [m for m in members if m is not anchor]
+        if not content and not ends_with_number:
+            continue  # only a bare number: nothing to render
+        for m in members:
+            used.add(id(m))
+        regions.append(Region("formula", box.expanded(2)))
+    return regions

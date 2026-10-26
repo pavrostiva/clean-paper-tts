@@ -17,7 +17,7 @@ from ...filters.noise import match_noise
 from ...textutil import clean_heading, join_lines, normalize
 from .geometry import Orientation, Rect
 from .lines import Line, PageText, extract_lines
-from .regions import (CAPTION_RE, TABLE_LABEL_RE, Region, find_equation_regions, find_listing_regions, find_table_region,
+from .regions import (CAPTION_RE, TABLE_LABEL_RE, Region, find_equation_regions, find_listing_regions, find_numbered_equations, find_table_region,
                       find_visual_regions, _horizontal_rules, is_caption_start)
 
 MAX_PAGES = 400
@@ -332,6 +332,18 @@ class PdfReader:
         caption_groups = self._caption_groups(lines, layout)
         cap_ids = {id(ln) for g in caption_groups for ln in g}
 
+        def extend_with_footnotes(box: Rect) -> Rect:
+            """Small-print notes directly below a table belong to it (and are not read aloud)."""
+            edge = box.y1
+            for ln in sorted(lines, key=lambda l: l.y0):
+                if id(ln) in cap_ids or ln.y0 < edge - 1 or ln.bbox.h_overlap(box) <= 0:
+                    continue
+                if ln.size > self.body - 0.7 or ln.y0 - edge > 12 or is_caption_start(ln, self.body):
+                    break
+                box = box.union(ln.bbox)
+                edge = ln.y1
+            return box
+
         # a drawn/filled box right under (or over) a "Table N" caption is that table, not a figure
         for r in regions:
             for grp in caption_groups:
@@ -342,14 +354,7 @@ class PdfReader:
                 if below or above:
                     r.kind = "table"
                     r.native_dpi = 0.0
-                    foot = [ln for ln in sorted(lines, key=lambda l: l.y0) if id(ln) not in cap_ids
-                            and ln.y0 >= r.bbox.y1 - 1 and ln.size <= self.body - 1.0 and ln.bbox.h_overlap(r.bbox) > 0]
-                    edge = r.bbox.y1
-                    for ln in foot:  # small-print table footnotes directly below
-                        if ln.y0 - edge > 12 or is_caption_start(ln, self.body):
-                            break
-                        r.bbox = r.bbox.union(ln.bbox)
-                        edge = ln.y1
+                    r.bbox = extend_with_footnotes(r.bbox)
                     break
 
         def absorb(region: Region, reason: str, only_short: bool = False) -> None:
@@ -408,7 +413,7 @@ class PdfReader:
                 self.doc.warnings.append(f"Page {pd.idx + 1}: could not locate the body of '{first.text[:40]}'; "
                                          "its text is left inline.")
                 continue
-            tr = Region("table", reg.expanded(3), label=first.text[:30])
+            tr = Region("table", extend_with_footnotes(reg).expanded(3), label=first.text[:30])
             regions.append(tr)
             absorb(tr, "table body")
 
@@ -419,6 +424,10 @@ class PdfReader:
 
         # display equations
         if self.opt.formulas_as_images:
+            for e in find_numbered_equations([ln for ln in lines if id(ln) not in cap_ids], self.body, layout.col_of,
+                                             [r.bbox for r in regions]):
+                regions.append(e)
+                absorb(e, "equation")
             eqs = find_equation_regions([ln for ln in lines if id(ln) not in cap_ids], self.body, layout.col_of,
                                         [r.bbox for r in regions])
             for e in eqs:
@@ -602,6 +611,7 @@ class PdfReader:
             else:
                 blocks.append(it)
 
+        blocks = self._merge_caption_tails(blocks)
         blocks = self._merge_dangling(blocks)
         blocks = self._relocate_captions(blocks)
         # --- abstract label inside a paragraph ("ABSTRACT: text ...")
@@ -741,20 +751,24 @@ class PdfReader:
             return True
         return False
 
+    def _merge_caption_tails(self, blocks: list) -> list:
+        """Caption text that overflowed onto the next page (small print after a caption) joins the caption."""
+        out: list = []
+        for b in blocks:
+            prev = out[-1] if out else None
+            if (isinstance(b, RawPara) and b.role == "body" and isinstance(prev, RawPara) and prev.role == "caption"
+                    and b.size < self.body - 0.5 and abs(b.size - prev.size) < 0.4 and not self._is_heading(b)):
+                out[-1] = RawPara(prev.lines + b.lines, prev.page, "caption", prev.col)
+                continue
+            out.append(b)
+        return out
+
     def _merge_dangling(self, blocks: list) -> list:
         """Join paragraphs interrupted by a column / page break or by an inline figure."""
         out: list = []
         i = 0
         while i < len(blocks):
             b = blocks[i]
-            if isinstance(b, RawPara) and b.role == "caption" and i + 1 < len(blocks):
-                nxt = blocks[i + 1]
-                if isinstance(nxt, RawPara) and nxt.role == "body" and nxt.size < self.body - 0.5 \
-                        and abs(nxt.size - b.size) < 0.4 and not self._is_heading(nxt):
-                    b = RawPara(b.lines + nxt.lines, b.page, "caption", b.col)
-                    blocks[i + 1] = b
-                    i += 1
-                    continue
             if isinstance(b, RawPara) and b.role == "body":
                 j = i + 1
                 skipped: list = []
@@ -763,7 +777,11 @@ class PdfReader:
                     if j >= len(blocks):
                         break
                     nxt = blocks[j]
-                    if isinstance(nxt, RawVisual) or (isinstance(nxt, RawPara) and nxt.role == "caption"):
+                    if isinstance(nxt, RawVisual) and nxt.region.kind == "formula":
+                        break  # a display equation is a real boundary: "...as shown in Eq. (1): [eq] where ..."
+                    if isinstance(nxt, RawVisual) or (isinstance(nxt, RawPara) and (
+                            nxt.role == "caption" or (nxt.role == "body" and nxt.size < b.size - 0.7
+                                                      and nxt.size < self.body - 0.7))):
                         skipped.append(nxt)
                         j += 1
                         continue
