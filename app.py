@@ -6,11 +6,22 @@ import hashlib
 from collections import defaultdict
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from clean_paper_tts import Options, convert
 from clean_paper_tts.model import Heading
 from clean_paper_tts.options import DEFAULT_DROP_SECTIONS
+
+
+
+def show_html(html: str, height: int = 700) -> None:
+    """Preview the generated page (it contains only escaped text and <img> tags, no scripts)."""
+    if hasattr(st, "iframe"):
+        st.iframe(html, height=height)
+    else:  # older Streamlit releases
+        import streamlit.components.v1 as components
+
+        components.html(html, height=height, scrolling=True)
+
 
 st.set_page_config(page_title="Clean Paper TTS", page_icon="🎧", layout="wide")
 
@@ -86,7 +97,7 @@ for f in files or []:
         tab_prev, tab_out, tab_drop = st.tabs(["Preview", "Outline", "What was removed"])
         with tab_prev:
             if st.toggle("Show preview", value=len(html) < 6_000_000, key=f"pv-{key}"):
-                components.html(html, height=700, scrolling=True)
+                show_html(html)
         with tab_out:
             for b in doc.blocks:
                 if isinstance(b, Heading):

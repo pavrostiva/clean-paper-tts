@@ -495,7 +495,8 @@ class PdfReader:
         width = max(x1 - x0, 1)
         if ln.x0 - x0 > 0.9 * ln.size and prev.x1 > x1 - 0.1 * width and not ln_cap and abs(prev.x0 - x0) < 0.5 * ln.size:
             return True
-        if prev.x1 < x1 - 0.22 * width and ln.text[:1].isupper() and not ln_cap and prev.text.rstrip().endswith(SENTENCE_END):
+        if prev.x1 < x1 - max(1.2 * ln.size, 0.05 * width) and ln.text[:1].isupper() and not ln_cap \
+                and prev.text.rstrip().endswith(SENTENCE_END):
             return True
         return False
 
